@@ -118,7 +118,7 @@ def main():
     
 # Global variables
 dn = 'https://app.mojohelpdesk.com'
-goodKey = 'a2094c56add92ae504d42bb2e7c01e4625971e09' # Get access key
+goodKey = '{YOUR_ACCESS_KEY}' # Get access key
 apiUrl = dn + '/api/v2/'
 headers = {'Accept': 'application/json', 'Content-Type': 'application/json'}
 
