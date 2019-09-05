@@ -5,12 +5,39 @@ import csv
 import datetime
 
 # Get ticket list by group id
-def getTicketsByGroup(group):
+def getTicketsByGroup(group, page):
     url = apiUrl + 'tickets/search?access_key=' \
-        + goodKey + '&page=1&per_page=1000&query=company.id:' \
+        + goodKey + '&page=' + str(page) + '&per_page=100&query=company.id:' \
         + group
-    r = requests.get(url, headers=headers)
+    attempt = 0
+    while attempt < 3:
+        try:
+            r = requests.get(url, headers=headers)
+        except requests.exceptions.RequestException:
+            attempt + 1
     return r.json()
+
+# Get ticket list by queue id
+def getTicketsByQueue(queue, page):
+    url = apiUrl + 'tickets/search?access_key=' \
+        + goodKey + '&page=' + str(page) + '&per_page=100&query=queue.id:' \
+        + queue
+    attempt = 0
+    while attempt < 3:
+        try:
+            r = requests.get(url, headers=headers)
+        except requests.exceptions.RequestException:
+            attempt + 1
+    return r.json()
+
+def collectAllPages(func, id):
+    def recursiveCollect(result, query, id, page):
+        pageResult = query(id, page)
+        if (len(pageResult)==0):
+            return result
+        else:
+            return recursiveCollect(result + pageResult, query, id, page + 1)
+    return recursiveCollect([], func, id, 1)
 
 # Get ticket info per ticket id
 def getTicketInfo(id):
@@ -49,25 +76,37 @@ def reformatDate(s):
 # Transpose comments from list to columns
 def transposeComments(comments, size):
     # Take body from every comment and transpose it to columns
+    comments_sorted = sorted(comments, key = lambda k: k['created_on'])
     return transposeList(list(
         map(lambda c: 'Comment: ' + \
             c['related_data']['user']['full_name'] + ': ' + \
             reformatDate(c['created_on']) + ': ' + \
             c['body'], comments)), size)
 
+# Print a "." w/o a carriage return
+def showProgress():
+    sys.stdout.write(".") # write w/o \n
+    sys.stdout.flush()
+
 # Main function
 def main():
 
-    # IO! Search for tickets from specified group 
-    tickets = getTicketsByGroup('127207')
+    # IO! Search for tickets from specified group
+    print('Get ticket list')
+    showProgress()
+    tickets = collectAllPages(getTicketsByQueue,'76784')
 
     # Filter tickets by id
     ticketIds = list(map(lambda i: i['id'], tickets))
 
     # IO! Get full ticket data for each id
+    print('Get ticket data')
+    showProgress()
     ticketData = list(map(lambda i: getTicketInfo(str(i)), ticketIds))
 
     # Comment dict
+    print('Postprocess data')
+    showProgress()
     ticketComments = list(map(lambda i: i['all_comments'], ticketData))
 
     # We need equal amount of columns for all tickets, so we'll use max
@@ -103,7 +142,9 @@ def main():
         ticketProcessed.update({'status_txt': statusDict[ticketProcessed['status_id']]})
         
         ticketsProcessed.append(ticketProcessed)
-        
+
+    print('Write data to disc')
+    showProgress()
     # Write results as JSON
     f = open('ticketData.json', 'w')
     f.write(json.dumps(ticketsProcessed))
@@ -118,7 +159,7 @@ def main():
     
 # Global variables
 dn = 'https://app.mojohelpdesk.com'
-goodKey = '{YOUR_ACCESS_KEY}' # Get access key
+goodKey = 'a2094c56add92ae504d42bb2e7c01e4625971e09' # Get access key
 apiUrl = dn + '/api/v2/'
 headers = {'Accept': 'application/json', 'Content-Type': 'application/json'}
 
