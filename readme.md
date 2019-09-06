@@ -15,9 +15,9 @@ python3 mojo2jira.py -k {YOUR API KEY} -q {MOJO QUEUE ID}
 Successfull execution results in ticketData.csv file in same folder
 
 Following options are available:
-    -k {YOUR API KEY}
-    -q {MOJO QUEUE ID}
-    -c {MAX COMMENTS PER TICKET}
+-    -k {YOUR API KEY}
+-    -q {MOJO QUEUE ID}
+-    -c {MAX COMMENTS PER TICKET}
 
 
 <a id="org1f7ae43"></a>
