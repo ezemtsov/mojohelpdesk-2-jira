@@ -16,7 +16,7 @@ def get(url, timeout):
 def parallelGet(urls, timeout):
     with PoolExecutor(max_workers=parallelismDegree) as executor:
         res = executor.map(lambda url: get(url, timeout), urls)
-    return [o for o in res]
+    return list(res)
 
 # Get ticket list by group id
 def getTicketsByGroup(group, page):
@@ -85,7 +85,7 @@ def transposeComments(comments, size):
             c['body'], comments)), size)
 
 # Additional processing of tickets after collecting detailed data
-def ticketPostprocessing(ticketData):
+def parseTicket(ticketData):
     # Init result
     ticketsProcessed = []
 
@@ -183,7 +183,7 @@ def main():
 
             # Extract relevant keys from dataset and transpose
             # comments into columns
-            ticketsProcessed = ticketPostprocessing(ticketData)
+            ticketsProcessed = parseTicket(ticketData)
             
             # Check if file exists. If not, create it and write header
             isFreshExport = not os.path.isfile('ticketData.csv')
