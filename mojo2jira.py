@@ -213,9 +213,9 @@ def main():
 
 def printHelp():
     print(\
-          'Following options are mandatory:\n\
-    -k {YOUR API KEY}\n\
-    -q {MOJO QUEUE ID}\n\
+          'Following options are available:\n\
+    -k {YOUR API KEY} (mandatory)\n\
+    -q {MOJO QUEUE ID} (mandatory)\n\
     -c {MAX COMMENTS PER TICKET}\n\
           ')
 
