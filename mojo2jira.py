@@ -1,15 +1,15 @@
 import sys
 import csv
 import json
-import datetime
+from datetime import datetime
 import os.path
 
 from concurrent.futures import ThreadPoolExecutor as PoolExecutor
 import requests
 
 # Simple HTTP get call
-def get(url, timeout):
-    res = requests.get(url, headers=headers, timeout=10)
+def get(url, t):
+    res = requests.get(url, headers=headers, timeout=t)
     return res.json()
 
 # Concurrent get requests
@@ -64,25 +64,32 @@ def elemOrEmpty(l, index):
     except KeyError:
         return ''
 
+# Return empty string if Null
+def valueOrEmpty(value):
+    if value == None:
+        return ''
+    else:
+        return value
+    
 # Transpose arbitrary list
-def transposeList(list, size):
+def transposeList(size, list):
     return { ('comment_' + str(i).zfill(2)) : elemOrEmpty(list, i)
              for i in range(0, size) }
 
 # Reformat datetime so that Jira understands
 def reformatDate(s):
-    d = datetime.datetime.strptime(s,'%Y-%m-%dT%H:%M:%S.%fZ')
-    return d.strftime('%d/%m/%y %I:%M:%S %p')
+    d = datetime.strptime(s,'%Y-%m-%dT%H:%M:%S.%fZ')
+    return d.strftime('%d/%m/%Y %H:%M:%S')
 
 # Transpose comments from list to columns
 def transposeComments(comments, size):
     # Take body from every comment and transpose it to columns
     comments_sorted = sorted(comments, key = lambda k: k['created_on'])
-    return transposeList(list(
-        map(lambda c: 'Comment: ' + \
-            c['related_data']['user']['full_name'] + ': ' + \
-            reformatDate(c['created_on']) + ': ' + \
-            c['body'], comments)), size)
+    return transposeList(size,
+        list(map(lambda c:
+                 reformatDate(c['created_on']) + '; ' + \
+                 valueOrEmpty(c['from_email']) + '; ' + \
+                 c['body'], comments)))
 
 # Additional processing of tickets after collecting detailed data
 def parseTicket(ticketData):
@@ -94,7 +101,7 @@ def parseTicket(ticketData):
 
     # We need equal amount of columns for all tickets, so we'll use max
     # maxCommentsPerTicket = max(list(map(lambda l: len(l), ticketComments)))
-
+    
     # Now let's transpose the comment section for every ticket. Amount
     # of columns is same for all tickets
     ticketCommentsTransposed = [
@@ -128,6 +135,7 @@ def parseTicket(ticketData):
                 ticketProcessed.update({ticketProp:ticket[ticketProp]})
         
         ticketsProcessed.append(ticketProcessed)
+
     return ticketsProcessed
 
 def getTicketIds():
@@ -138,7 +146,13 @@ def getTicketIds():
     # If file does not exist
     except:
         print('Requesting ticket IDs')
-        urls = [getTicketsByQueue(str(mojoQueueId),page) for page in range(100)]
+
+        if (exportMode == 'QUEUE'):
+            getFunction = getTicketsByQueue
+        elif (exportMode == 'GROUP'):
+            getFunction = getTicketsByGroup
+
+        urls = [getFunction(mojoId,page) for page in range(100)]
         ticketsBatches = parallelGet(urls, 10)
         # Concatenate lists (lol python)
         tickets = [tId for ticketList in ticketsBatches for tId in ticketList]
@@ -176,15 +190,15 @@ def main():
             print(str(i + 1) + ' of ' + str(packetCount+1))
             
             packetOfTicketIds =  ticketIdsLeft[:packetSize]
-        
+
             # IO! Get full ticket data for each id
             urls = [getTicketInfo(ticketId) for ticketId in packetOfTicketIds]
-            ticketData = parallelGet(urls, 2)
+            ticketData = parallelGet(urls, 5)
 
             # Extract relevant keys from dataset and transpose
             # comments into columns
             ticketsProcessed = parseTicket(ticketData)
-            
+
             # Check if file exists. If not, create it and write header
             isFreshExport = not os.path.isfile('ticketData.csv')
             keys = ticketsProcessed[0].keys()
@@ -214,9 +228,10 @@ def main():
 def printHelp():
     print(\
           'Following options are available:\n\
-    -k {YOUR API KEY} (mandatory)\n\
-    -q {MOJO QUEUE ID} (mandatory)\n\
-    -c {MAX COMMENTS PER TICKET}\n\
+    --key {YOUR API KEY} (mandatory)\n\
+    --id {MOJO GROUP/QUEUE ID} (mandatory)\n\
+    --mode {GROUP || QUEUE} (mandatory)\n\
+    --max_comments {MAX COMMENTS PER TICKET}\n\
           ')
 
 sysInput = sys.argv
@@ -224,23 +239,34 @@ argumentList = sysInput[1:]
 
 # Set access key
 try:
-    goodKey = argumentList[argumentList.index('-k')+1]
+    goodKey = argumentList[argumentList.index('--key')+1]
 except:
-    printHelp()
-    sys.exit()
+    goodKey = ''
 
-# Set queue id
+# Set queue/group id
 try:
-    mojoQueueId = argumentList[argumentList.index('-q')+1]
+    mojoId = argumentList[argumentList.index('--id')+1]
 except:
-    printHelp()
-    sys.exit()
+    mojoId  = ''
 
+# Set mode (group/queue)
+availableModes = ['GROUP', 'QUEUE']
+try:
+    exportMode = argumentList[argumentList.index('--mode')+1]
+except:
+    exportMode = ''
+    
 # Set max comments per ticket, default 50
 try:
     maxCommentsPerTicket = argumentList[argumentList.index('-c')+1]
 except:
     maxCommentsPerTicket = 50
+
+# Check arguments
+if (not goodKey or not mojoId or not (exportMode in availableModes)):
+    print('Wrong arguments, please try again')
+    printHelp()
+    sys.exit()
 
 # Global variables
 dn = 'https://app.mojohelpdesk.com'
@@ -278,12 +304,16 @@ statusDict = {
     60 : 'closed'
 }
 
-# Restart our flow on errors
+#Restart our flow on errors
 stillWorkToBeDone = True
 while stillWorkToBeDone:
     try:
         main()
         stillWorkToBeDone = False
-    except:
-        print('Error occured, let\'s try restarting')
+    except Exception as e:
+        print('Error occured with following message:')
+        print('____________________________________________')
+        print(str(e))
+        print('____________________________________________')
+        print('Let\'s try restarting')
         stillWorkToBeDone = True

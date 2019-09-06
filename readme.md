@@ -9,23 +9,24 @@
 <a id="org79a7be8"></a>
 
 ## How to use
-
-python3 mojo2jira.py -k {YOUR API KEY} -q {MOJO QUEUE ID}
-
+```
+python3 mojo2jira.py --key {YOUR API KEY} --id {MOJO QUEUE/GROUP ID} --mode {QUEUE || GROUP}
+```
 Successfull execution results in ticketData.csv file in same folder
 
 Following options are available:
--    -k {YOUR API KEY}
--    -q {MOJO QUEUE ID}
--    -c {MAX COMMENTS PER TICKET}
-
-
+```
+--key {YOUR API KEY} (mandatory)
+--id {MOJO GROUP/QUEUE ID} (mandatory)
+--mode {GROUP || QUEUE} (mandatory)
+--max_comments {MAX COMMENTS PER TICKET}
+```
 <a id="org1f7ae43"></a>
 
 ## Dependencies
-
--   pip3 install requests
-
+```
+pip3 install requests
+```
 ## Notes
 
 -   Export progress is saved on disk, so that it can be continued on failure.
