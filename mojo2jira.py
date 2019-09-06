@@ -1,20 +1,21 @@
 import sys
 import csv
+import json
 import datetime
+import os.path
 
 from concurrent.futures import ThreadPoolExecutor as PoolExecutor
 import requests
 
 # Simple HTTP get call
-def get(url):
-    res = requests.get(url, headers=headers, timeout=2)
+def get(url, timeout):
+    res = requests.get(url, headers=headers, timeout=10)
     return res.json()
 
 # Concurrent get requests
-def parallelGet(urls):
+def parallelGet(urls, timeout):
     with PoolExecutor(max_workers=parallelismDegree) as executor:
-        res = executor.map(get, urls)
-    # Concatenate lists (lol python)
+        res = executor.map(lambda url: get(url, timeout), urls)
     return [o for o in res]
 
 # Get ticket list by group id
@@ -92,7 +93,7 @@ def ticketPostprocessing(ticketData):
     ticketComments = list(map(lambda i: i['all_comments'], ticketData))
 
     # We need equal amount of columns for all tickets, so we'll use max
-    maxCommentsPerTicket = max(list(map(lambda l: len(l), ticketComments)))
+    # maxCommentsPerTicket = max(list(map(lambda l: len(l), ticketComments)))
 
     # Now let's transpose the comment section for every ticket. Amount
     # of columns is same for all tickets
@@ -116,7 +117,7 @@ def ticketPostprocessing(ticketData):
         # Copy fields from custom dictionaries
         ticketProcessed.update({'priority_txt': priorityDict[ticket['priority_id']]})
         ticketProcessed.update({'status_txt': statusDict[ticket['status_id']]})
-        
+
         for ticketProp in ticket:
             if ticketProp == 'all_comments':
                 ticketCommentsTransposed = transposeComments(
@@ -133,20 +134,20 @@ def getTicketIds():
     # Let's check if we already have something
     try:
         with open('ticketQueue.json', 'r') as f:
-            content = f.read()
-            ticketIds = eval(content)
+            ticketIds = json.load(f)
     # If file does not exist
     except:
         print('Requesting ticket IDs')
         urls = [getTicketsByQueue(str(mojoQueueId),page) for page in range(100)]
-        ticketsBatches = parallelGet(urls)
+        ticketsBatches = parallelGet(urls, 10)
+        # Concatenate lists (lol python)
         tickets = [tId for ticketList in ticketsBatches for tId in ticketList]
 
         # Filter tickets by id
         ticketIds = dict(map(lambda i: (i['id'], False), tickets))
 
         with open('ticketQueue.json', 'w') as f:
-            f.write(str(ticketIds))
+            json.dump(ticketIds,f)
             f.close()
 
     return ticketIds
@@ -178,17 +179,20 @@ def main():
         
             # IO! Get full ticket data for each id
             urls = [getTicketInfo(ticketId) for ticketId in packetOfTicketIds]
-            ticketData = parallelGet(urls)
+            ticketData = parallelGet(urls, 2)
 
             # Extract relevant keys from dataset and transpose
             # comments into columns
             ticketsProcessed = ticketPostprocessing(ticketData)
             
-            # Write results as CSV
+            # Check if file exists. If not, create it and write header
+            isFreshExport = not os.path.isfile('ticketData.csv')
             keys = ticketsProcessed[0].keys()
             with open('ticketData.csv', 'a+') as writeFile:
                 writer = csv.DictWriter(writeFile, keys, delimiter=';')
-                #writer.writeheader()
+                
+                if isFreshExport: writer.writeheader()
+
                 writer.writerows(ticketsProcessed)
                 writeFile.close()
 
@@ -198,7 +202,7 @@ def main():
 
             # Save updated export state to file
             with open('ticketQueue.json', 'w') as f:
-                f.write(str(ticketIds))
+                json.dump(ticketIds,f)
                 f.close()
 
             # Update the ticket queue
@@ -212,25 +216,32 @@ def printHelp():
           'Following options are mandatory:\n\
     -k {YOUR API KEY}\n\
     -q {MOJO QUEUE ID}\n\
+    -c {MAX COMMENTS PER TICKET}\n\
           ')
 
 sysInput = sys.argv
 argumentList = sysInput[1:]
 
-# Get access key
+# Set access key
 try:
     goodKey = argumentList[argumentList.index('-k')+1]
 except:
     printHelp()
     sys.exit()
 
-# Get queue id
+# Set queue id
 try:
     mojoQueueId = argumentList[argumentList.index('-q')+1]
 except:
     printHelp()
     sys.exit()
-    
+
+# Set max comments per ticket, default 50
+try:
+    maxCommentsPerTicket = argumentList[argumentList.index('-c')+1]
+except:
+    maxCommentsPerTicket = 50
+
 # Global variables
 dn = 'https://app.mojohelpdesk.com'
 apiUrl = dn + '/api/v2/'
@@ -274,5 +285,5 @@ while stillWorkToBeDone:
         main()
         stillWorkToBeDone = False
     except:
-        print('Error occured, restarting')
+        print('Error occured, let\'s try restarting')
         stillWorkToBeDone = True
