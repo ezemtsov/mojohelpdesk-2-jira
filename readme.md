@@ -22,6 +22,10 @@ Following options are available:
 
 <a id="org1f7ae43"></a>
 
+## Dependencies
+
+-   pip3 install requests
+
 ## Notes
 
 -   Export progress is saved on disk, so that it can be continued on failure.
