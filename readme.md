@@ -1,20 +1,9 @@
-
-# Table of Contents
-
-1.  [mojo2jira](#org60a10e4)
-    1.  [mojo2jira is a simple tool for exporting MOJO Helpdesk ticket data in jira-friendly CSV format with comments](#org05c4b30)
-    2.  [How to use](#org79a7be8)
-    3.  [Notes](#org1f7ae43)
-
-
-<a id="org60a10e4"></a>
-
 # mojo2jira
 
 
 <a id="org05c4b30"></a>
 
-## mojo2jira is a simple tool for exporting MOJO Helpdesk ticket data in jira-friendly CSV format with comments
+## export your MOJO Helpdesk ticket data in jira-friendly CSV format with comments
 
 
 <a id="org79a7be8"></a>
