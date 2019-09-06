@@ -1,34 +1,36 @@
-import requests
 import sys
 import json
 import csv
 import datetime
+
+from concurrent.futures import ThreadPoolExecutor as PoolExecutor
+import requests
+
+# Simple HTTP get call
+def get(url):
+    res = requests.get(url, headers=headers)
+    return res.json()
+
+# Concurrent get requests
+def parallelGet(urls):
+    with PoolExecutor(max_workers=12) as executor:
+        res = executor.map(get, urls)
+    # Concatenate lists (lol python)
+    return [o for o in res]
 
 # Get ticket list by group id
 def getTicketsByGroup(group, page):
     url = apiUrl + 'tickets/search?access_key=' \
         + goodKey + '&page=' + str(page) + '&per_page=100&query=company.id:' \
         + group
-    attempt = 0
-    while attempt < 3:
-        try:
-            r = requests.get(url, headers=headers)
-        except requests.exceptions.RequestException:
-            attempt + 1
-    return r.json()
+    return url
 
 # Get ticket list by queue id
 def getTicketsByQueue(queue, page):
     url = apiUrl + 'tickets/search?access_key=' \
         + goodKey + '&page=' + str(page) + '&per_page=100&query=queue.id:' \
         + queue
-    attempt = 0
-    while attempt < 3:
-        try:
-            r = requests.get(url, headers=headers)
-        except requests.exceptions.RequestException:
-            attempt + 1
-    return r.json()
+    return url
 
 def collectAllPages(func, id):
     def recursiveCollect(result, query, id, page):
@@ -41,10 +43,9 @@ def collectAllPages(func, id):
 
 # Get ticket info per ticket id
 def getTicketInfo(id):
-    url = apiUrl + 'tickets/' + id + '?access_key=' \
+    url = apiUrl + 'tickets/' + str(id) + '?access_key=' \
         + goodKey + '&page=1&per_page=1000'
-    r = requests.get(url, headers=headers)
-    return r.json()
+    return url
 
 # Get users
 def getUsers():
@@ -83,30 +84,12 @@ def transposeComments(comments, size):
             reformatDate(c['created_on']) + ': ' + \
             c['body'], comments)), size)
 
-# Print a "." w/o a carriage return
-def showProgress():
-    sys.stdout.write(".") # write w/o \n
-    sys.stdout.flush()
+# Additional processing of tickets after collecting detailed data
+def ticketPostprocessing(ticketData):
+    # Init result
+    ticketsProcessed = []
 
-# Main function
-def main():
-
-    # IO! Search for tickets from specified group
-    print('Get ticket list')
-    showProgress()
-    tickets = collectAllPages(getTicketsByQueue,'76784')
-
-    # Filter tickets by id
-    ticketIds = list(map(lambda i: i['id'], tickets))
-
-    # IO! Get full ticket data for each id
-    print('Get ticket data')
-    showProgress()
-    ticketData = list(map(lambda i: getTicketInfo(str(i)), ticketIds))
-
-    # Comment dict
-    print('Postprocess data')
-    showProgress()
+    # Extract comment dict
     ticketComments = list(map(lambda i: i['all_comments'], ticketData))
 
     # We need equal amount of columns for all tickets, so we'll use max
@@ -119,17 +102,8 @@ def main():
         for i in ticketComments ]
     
     # Extract relevant keys from dataset and transpose comments into columns
-    ticketsProcessed = []
     for ticket in ticketData:
         ticketProcessed = {}
-        for ticketProp in ticket:
-            if ticketProp == 'all_comments':
-                ticketCommentsTransposed = transposeComments(
-                    ticket['all_comments'], maxCommentsPerTicket)
-                for comment in ticketCommentsTransposed:
-                    ticketProcessed.update({comment: ticketCommentsTransposed[comment]})
-            elif ticketProp in fieldsWeNeed:
-                ticketProcessed.update({ticketProp:ticket[ticketProp]})
 
         # Copy fields from "related_data" section
         ticketProcessed.update({'user_email': ticket['related_data']['user']['email']})
@@ -138,30 +112,88 @@ def main():
         ticketProcessed.update({'company_name': ticket['related_data']['company']['name']})
 
         # Copy fields from custom dictionaries
-        ticketProcessed.update({'priority_txt': priorityDict[ticketProcessed['priority_id']]})
-        ticketProcessed.update({'status_txt': statusDict[ticketProcessed['status_id']]})
+        ticketProcessed.update({'priority_txt': priorityDict[ticket['priority_id']]})
+        ticketProcessed.update({'status_txt': statusDict[ticket['status_id']]})
+        
+        for ticketProp in ticket:
+            if ticketProp == 'all_comments':
+                ticketCommentsTransposed = transposeComments(
+                    ticket['all_comments'], maxCommentsPerTicket)
+                for comment in ticketCommentsTransposed:
+                    ticketProcessed.update({comment: ticketCommentsTransposed[comment]})
+            elif ticketProp in fieldsWeNeed:
+                ticketProcessed.update({ticketProp:ticket[ticketProp]})
         
         ticketsProcessed.append(ticketProcessed)
+    return ticketsProcessed
 
-    print('Write data to disc')
-    showProgress()
-    # Write results as JSON
-    f = open('ticketData.json', 'w')
-    f.write(json.dumps(ticketsProcessed))
+def getTicketIds():
+    # Let's check if we already have something
+    try:
+        with open('ticketList.txt', 'r') as f:
+            content = f.read()
+            ticketIds = eval(content)
+            print('List found in file')
+    # If file does not exist
+    except:
+        print('Requesting ticket IDs')
+        urls = [getTicketsByQueue('76784',page) for page in range(100)]
+        ticketsBatches = parallelGet(urls)
+        tickets = [tId for ticketList in ticketsBatches for tId in ticketList]
 
-    # Write results as CSV
-    keys = ticketsProcessed[0].keys()
-    with open('ticketData.csv', 'w') as writeFile:
-        writer = csv.DictWriter(writeFile, keys, delimiter=';')
-        writer.writeheader()
-        writer.writerows(ticketsProcessed)
-    writeFile.close()
+        # Filter tickets by id
+        ticketIds = dict(map(lambda i: (i['id'], False), tickets))
+
+        with open("ticketList.txt", "w") as f:
+            f.write(str(ticketIds))
+            f.close()
+
+    return ticketIds
+    
+# Main function
+def main():
+    
+    # IO! Get the list of tickets which are not exported yet
+    ticketIds = getTicketIds()
+    ticketIdsLeft = [ key for (key, value) in ticketIds.items() if value == False]
+
+    packetSize = 20
+    packetCount = len(ticketIdsLeft) // packetSize
+
+    print('Get ticket data')
+    for i in range(packetCount):
+        print(str(i + 1) + ' of ' + str(packetCount))
+        packetOfTicketIds = ticketIdsLeft[:packetSize]
+
+        # IO! Get full ticket data for each id
+        urls = [getTicketInfo(ticketId) for ticketId in packetOfTicketIds]
+        ticketData = parallelGet(urls)
+
+        # Extract relevant keys from dataset and transpose comments into columns
+        ticketsProcessed = ticketPostprocessing(ticketData)
+
+        # Write results as CSV
+        keys = ticketsProcessed[0].keys()
+        with open('ticketData.csv', 'a+') as writeFile:
+            writer = csv.DictWriter(writeFile, keys, delimiter=';')
+            #writer.writeheader()
+            writer.writerows(ticketsProcessed)
+            writeFile.close()
+
+        for t in packetOfTicketIds:
+            ticketIds.update({ t: True })
+            
+        with open("ticketList.txt", "w") as f:
+            f.write(str(ticketIds))
+            f.close()
     
 # Global variables
 dn = 'https://app.mojohelpdesk.com'
 goodKey = 'a2094c56add92ae504d42bb2e7c01e4625971e09' # Get access key
 apiUrl = dn + '/api/v2/'
 headers = {'Accept': 'application/json', 'Content-Type': 'application/json'}
+
+
 
 fieldsWeNeed = [ 'id'
                  ,'updated_on'
