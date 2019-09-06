@@ -1,5 +1,4 @@
 import sys
-import json
 import csv
 import datetime
 
@@ -8,12 +7,12 @@ import requests
 
 # Simple HTTP get call
 def get(url):
-    res = requests.get(url, headers=headers)
+    res = requests.get(url, headers=headers, timeout=2)
     return res.json()
 
 # Concurrent get requests
 def parallelGet(urls):
-    with PoolExecutor(max_workers=12) as executor:
+    with PoolExecutor(max_workers=parallelismDegree) as executor:
         res = executor.map(get, urls)
     # Concatenate lists (lol python)
     return [o for o in res]
@@ -105,6 +104,9 @@ def ticketPostprocessing(ticketData):
     for ticket in ticketData:
         ticketProcessed = {}
 
+        # It's nice to have Id as first field
+        ticketProcessed.update({'id': ticket['id']})
+
         # Copy fields from "related_data" section
         ticketProcessed.update({'user_email': ticket['related_data']['user']['email']})
         ticketProcessed.update({'assigned_to_email': ticket['related_data']['assignee_user']['email']})
@@ -130,21 +132,20 @@ def ticketPostprocessing(ticketData):
 def getTicketIds():
     # Let's check if we already have something
     try:
-        with open('ticketList.txt', 'r') as f:
+        with open('ticketQueue.json', 'r') as f:
             content = f.read()
             ticketIds = eval(content)
-            print('List found in file')
     # If file does not exist
     except:
         print('Requesting ticket IDs')
-        urls = [getTicketsByQueue('76784',page) for page in range(100)]
+        urls = [getTicketsByQueue(str(mojoQueueId),page) for page in range(100)]
         ticketsBatches = parallelGet(urls)
         tickets = [tId for ticketList in ticketsBatches for tId in ticketList]
 
         # Filter tickets by id
         ticketIds = dict(map(lambda i: (i['id'], False), tickets))
 
-        with open("ticketList.txt", "w") as f:
+        with open('ticketQueue.json', 'w') as f:
             f.write(str(ticketIds))
             f.close()
 
@@ -155,48 +156,90 @@ def main():
     
     # IO! Get the list of tickets which are not exported yet
     ticketIds = getTicketIds()
-    ticketIdsLeft = [ key for (key, value) in ticketIds.items() if value == False]
 
-    packetSize = 20
+    # Initial calculation of tickets to export
+    theWayToFindTicketsLeft = lambda t: [ key for (key, value) in t.items() if value == False ]
+    ticketIdsLeft = theWayToFindTicketsLeft(ticketIds)
+
+    # Packet size is a bit arbitrary
+    packetSize = parallelismDegree * 2
     packetCount = len(ticketIdsLeft) // packetSize
 
-    print('Get ticket data')
-    for i in range(packetCount):
-        print(str(i + 1) + ' of ' + str(packetCount))
-        packetOfTicketIds = ticketIdsLeft[:packetSize]
+    if len(ticketIdsLeft) == 0: 
+        print('All tickets are loaded')       
+    else:
+        print('Downloading ticket data. ' + str(len(ticketIdsLeft)) + ' tickets left.')
 
-        # IO! Get full ticket data for each id
-        urls = [getTicketInfo(ticketId) for ticketId in packetOfTicketIds]
-        ticketData = parallelGet(urls)
-
-        # Extract relevant keys from dataset and transpose comments into columns
-        ticketsProcessed = ticketPostprocessing(ticketData)
-
-        # Write results as CSV
-        keys = ticketsProcessed[0].keys()
-        with open('ticketData.csv', 'a+') as writeFile:
-            writer = csv.DictWriter(writeFile, keys, delimiter=';')
-            #writer.writeheader()
-            writer.writerows(ticketsProcessed)
-            writeFile.close()
-
-        for t in packetOfTicketIds:
-            ticketIds.update({ t: True })
+        # Let's start the export loop
+        for i in range(packetCount+1):
+            print(str(i + 1) + ' of ' + str(packetCount+1))
             
-        with open("ticketList.txt", "w") as f:
-            f.write(str(ticketIds))
-            f.close()
+            packetOfTicketIds =  ticketIdsLeft[:packetSize]
+        
+            # IO! Get full ticket data for each id
+            urls = [getTicketInfo(ticketId) for ticketId in packetOfTicketIds]
+            ticketData = parallelGet(urls)
+
+            # Extract relevant keys from dataset and transpose
+            # comments into columns
+            ticketsProcessed = ticketPostprocessing(ticketData)
+            
+            # Write results as CSV
+            keys = ticketsProcessed[0].keys()
+            with open('ticketData.csv', 'a+') as writeFile:
+                writer = csv.DictWriter(writeFile, keys, delimiter=';')
+                #writer.writeheader()
+                writer.writerows(ticketsProcessed)
+                writeFile.close()
+
+            # Update tickets that are downloaded
+            for t in packetOfTicketIds:
+                ticketIds.update({ t: True })
+
+            # Save updated export state to file
+            with open('ticketQueue.json', 'w') as f:
+                f.write(str(ticketIds))
+                f.close()
+
+            # Update the ticket queue
+            ticketIdsLeft = theWayToFindTicketsLeft(ticketIds)
+
+        # Done
+        print('Export job is finished')
+
+def printHelp():
+    print(\
+          'Following options are mandatory:\n\
+    -k {YOUR API KEY}\n\
+    -q {MOJO QUEUE ID}\n\
+          ')
+
+sysInput = sys.argv
+argumentList = sysInput[1:]
+
+# Get access key
+try:
+    goodKey = argumentList[argumentList.index('-k')+1]
+except:
+    printHelp()
+    sys.exit()
+
+# Get queue id
+try:
+    mojoQueueId = argumentList[argumentList.index('-q')+1]
+except:
+    printHelp()
+    sys.exit()
     
 # Global variables
 dn = 'https://app.mojohelpdesk.com'
-goodKey = 'a2094c56add92ae504d42bb2e7c01e4625971e09' # Get access key
 apiUrl = dn + '/api/v2/'
 headers = {'Accept': 'application/json', 'Content-Type': 'application/json'}
 
+# Perfomance tuning parameters
+parallelismDegree = 12
 
-
-fieldsWeNeed = [ 'id'
-                 ,'updated_on'
+fieldsWeNeed = [ 'updated_on'
                  ,'status_id'
                  ,'assigned_to_id'
                  ,'ticket_type_id'
@@ -224,5 +267,12 @@ statusDict = {
     60 : 'closed'
 }
 
-# start execution
-main()
+# Restart our flow on errors
+stillWorkToBeDone = True
+while stillWorkToBeDone:
+    try:
+        main()
+        stillWorkToBeDone = False
+    except:
+        print('Error occured, restarting')
+        stillWorkToBeDone = True
